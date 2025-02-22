@@ -1,0 +1,414 @@
+---
+title: "StatsProject"
+output:
+  html_document: default
+  word_document: default
+date: "2024-12-03"
+---
+
+# Introduction
+
+This analysis aims to understand how the penalty variants affect the expected profit. We explore statistical methods such as ANOVA, t-tests, and chi-square tests, as well as visualizations like bar graphs and stratification by penalty variants.
+
+### Load Required Libraries
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(pwr)
+```
+
+### Load Dataset
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+
+order_file<- read_csv("order_file.csv",
+                 col_types = cols(
+                   order.id = col_character(),
+                   driver.id = col_character(),
+                   business.type = col_character(),
+                   expected.profit = col_double(),
+                   order.placed.time = col_character(),
+                   delivery.completed.time = col_character(),
+                   cancel.dummy = col_double()
+                 ))
+penalty_file <- read_csv("penalty_file.csv")
+view(order_file)
+cat("The dataset has", nrow(order_file), "rows.\n")
+view(penalty_file)
+cat("The dataset has", nrow(penalty_file), "rows.\n")
+```
+
+### Merge Dataset
+
+```{r}
+data <- merge(order_file, penalty_file, by = "driver.id")
+options(scipen = 999)  # To prevent scientific notation
+```
+
+### Clean Data
+
+```{r}
+# Remove rows with missing values in 'expected.profit'
+data <- data[!is.na(data$expected.profit), ]
+```
+
+### Mean and Standard Deviation of expected profit by penalty variant
+
+```{r}
+####expected mean of the Expected profit and Penalty variant####
+summary_stats <- aggregate(expected.profit ~ penalty.variant, data = data, FUN = function(x) c(mean = mean(x), sd = sd(x)))
+summary_stats <- do.call(data.frame, summary_stats) 
+names(summary_stats)[2:3] <- c("mean", "sd")
+print(summary_stats)
+```
+
+### Cancellation Rates by penalty variant
+
+```{r}
+# Calculate cancellation rates by penalty variant
+cancel_rate_by_penalty <- aggregate(cancel.dummy ~ penalty.variant, data = data, FUN = mean)
+cancel_rate_by_penalty$cancellation_rate_pct <- cancel_rate_by_penalty$cancel.dummy * 100
+print(cancel_rate_by_penalty)
+
+```
+
+### Max and Min values of cancel dummy with expected profit
+
+```{r}
+max_min_summary <- aggregate(expected.profit ~ cancel.dummy, data = data, 
+                             FUN = function(x) c(Max = max(x, na.rm = TRUE), Min = min(x, na.rm = TRUE)))
+max_min_summary <- do.call(data.frame, max_min_summary)
+names(max_min_summary)[2:3] <- c("Maximum", "Minimum")
+print(max_min_summary)
+```
+
+### Request based vs Rider Based Cancellation Rates
+
+```{r}
+# Request-Based Cancellation Rate
+request_based_rate <- mean(data$cancel.dummy)
+print(paste("Request-Based Cancellation Rate:", round(request_based_rate * 100, 2), "%"))
+
+# Rider-Based Cancellation Rate
+# Calculate the cancellation rate for each driver (rider) and then average
+rider_based_data <- aggregate(cancel.dummy ~ driver.id, data = data, mean) 
+rider_based_rate <- mean(rider_based_data$cancel.dummy)
+print(paste("Rider-Based Cancellation Rate:", round(rider_based_rate * 100, 2), "%"))
+rate_difference <- (rider_based_rate - request_based_rate) * 100
+print(paste("Difference Between Rates:", round(rate_difference, 2), "%"))
+```
+
+### Plot of Request_Based and Ride-Based Cancellation
+
+```{r}
+# Request-Based Cancellation Rate
+request_based_rate <- mean(data$cancel.dummy)
+# Rider-Based Cancellation Rate
+rider_based_data <- aggregate(cancel.dummy ~ driver.id, data = data, mean)
+rider_based_rate <- mean(rider_based_data$cancel.dummy)
+
+cancellation_rates <- data.frame(
+  Rate_Type = c("Request-Based", "Rider-Based"),
+  Cancellation_Rate = c(request_based_rate * 100, rider_based_rate * 100)
+)
+ggplot(cancellation_rates, aes(x = Rate_Type, y = Cancellation_Rate, fill = Rate_Type)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(Cancellation_Rate, 2), "%")), vjust = -0.3) +
+  labs(
+    title = "Cancellation Rates: Request-Based vs Rider-Based",
+    x = "Rate Type",
+    y = "Cancellation Rate (%)"
+  ) +
+  theme_minimal()
+
+
+```
+
+### Completion rate by Penalty Variant
+
+```{r}
+# Calculate completion rate (1 - cancel.dummy) for each penalty variant
+completion_rate <- data %>%
+  group_by(penalty.variant) %>%
+  summarize(Completion_Rate = mean(1 - cancel.dummy) * 100)
+
+# Plot
+ggplot(completion_rate, aes(x = penalty.variant, y = Completion_Rate, fill = penalty.variant)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(Completion_Rate, 2), "%")), vjust = -0.3) +
+  labs(
+    title = "Completion Rate by Penalty Variant",
+    x = "Penalty Variant ($)",
+    y = "Completion Rate (%)"
+  ) +
+  theme_minimal()
+
+```
+
+### Cancellation Rate by Each Business Type
+
+```{r}
+# Calculate cancellation rates for each business type
+business_cancellation <- data %>%
+  group_by(business.type) %>%
+  summarize(Cancellation_Rate = mean(cancel.dummy) * 100)
+ggplot(business_cancellation, aes(x = business.type, y = Cancellation_Rate, fill = business.type)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(Cancellation_Rate, 2), "%")), vjust = -0.3) +
+  labs(
+    title = "Cancellation Rates by Business Type",
+    x = "Business Type",
+    y = "Cancellation Rate (%)"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+# Calculate mean and standard deviation of expected profit for each penalty variant
+expected_profit <- data %>%
+  group_by(penalty.variant) %>%
+  summarize(
+    Mean_Profit = mean(expected.profit, na.rm = TRUE),
+    SD = sd(expected.profit, na.rm = TRUE)
+  )
+
+# Plot
+ggplot(expected_profit, aes(x = penalty.variant, y = Mean_Profit, fill = penalty.variant)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  geom_errorbar(aes(ymin = Mean_Profit - SD, ymax = Mean_Profit + SD), width = 0.2) +
+  geom_text(aes(label = paste0("$", round(Mean_Profit, 2))), vjust = -0.3) +
+  labs(
+    title = "Expected Profit by Penalty Variant",
+    x = "Penalty Variant ($)",
+    y = "Mean Profit ($)"
+  ) +
+  theme_minimal()
+
+```
+
+### Power Analysis for A/B Testing
+
+```{r}
+
+effect_size <- 0.2  # Small effect size
+alpha <- 0.05       # Significance level
+power <- 0.8        # Desired power
+# Calculate required sample size for a two-sample t-test
+sample_size <- pwr.t.test(d = effect_size, sig.level = alpha, power = power, type = "two.sample")$n
+print(paste("Required Sample Size per Group:", ceiling(sample_size)))
+# Check if current sample size is sufficient
+current_sample_size <- nrow(data) / length(unique(data$penalty.variant))
+if (current_sample_size >= ceiling(sample_size)) {
+  print("The current sample size is sufficient for detecting the effect size.")
+} else {
+  print("The current sample size is insufficient; consider increasing it.")
+}
+```
+
+### ANOVA for Penalty Variant
+
+```{r}
+#ANOVA to check if penalty.variant affects expected.profit
+anova_rides <- aov(expected.profit ~ penalty.variant, data = data)
+summary(anova_rides)
+```
+
+### Contigency table for cancellations by business type
+
+```{r}
+# Create a contingency table for cancellations by business type
+table_data <- table(data$business.type, data$cancel.dummy)
+row_percentages <- prop.table(table_data, 1) * 100
+# Combine the contingency table with row percentages
+table_with_percentages <- as.data.frame(table_data)
+names(table_with_percentages) <- c("Business Type", "Cancel Dummy", "Frequency")
+table_with_percentages$Proportion <- as.vector(row_percentages)
+print(table_with_percentages)
+```
+
+### Multiple Testing (Bonferroni Correction)
+
+```{r}
+bonferroni_test <- pairwise.t.test(data$expected.profit, data$penalty.variant, p.adjust.method = "bonferroni")
+bonferroni_test 
+```
+
+### t-test for Cancellation Status
+
+```{r}
+###expected mean of profit stratified by group pentalty variant###
+summary_stats <- aggregate(expected.profit ~ cancel.dummy, data = data, FUN = function(x) c(mean = mean(x), sd = sd(x)))
+summary_stats <- do.call(data.frame, summary_stats)
+names(summary_stats)[2:3] <- c("mean", "sd") 
+print(summary_stats)
+
+##p-value##
+
+t_test_result <- t.test(expected.profit ~ cancel.dummy, data = data, var.equal = FALSE)
+print(t_test_result)
+```
+
+### Chi-Square Test
+
+```{r}
+######Chi-square between dummy and variant####
+
+table_data <- table(data$penalty.variant, data$cancel.dummy)
+table_data 
+
+# Perform the Chi-Square Test#
+chi_square_result <- chisq.test(table_data)
+chi_square_result
+```
+
+### Stratification by Penalty variant
+
+```{r}
+################stratify this by group###################
+
+data_cntrl <- subset(data, penalty.variant == 0)
+data_trt1 <- subset(data, penalty.variant == 10)
+data_trt2 <- subset(data, penalty.variant == 20)
+
+###data_cntrl###
+summary_stats <- aggregate(expected.profit ~ cancel.dummy, data = data_cntrl, FUN = function(x) c(mean = mean(x), sd = sd(x)))
+summary_stats <- do.call(data.frame, summary_stats)  # Format as a data frame
+names(summary_stats)[2:3] <- c("mean", "sd")  # Rename columns
+summary_stats
+
+t_test_result <- t.test(expected.profit ~ cancel.dummy, data = data_cntrl, var.equal = FALSE)
+t_test_result
+
+###data_trt1###
+summary_stats <- aggregate(expected.profit ~ cancel.dummy, data = data_trt1, FUN = function(x) c(mean = mean(x), sd = sd(x)))
+summary_stats <- do.call(data.frame, summary_stats)  # Format as a data frame
+names(summary_stats)[2:3] <- c("mean", "sd")  # Rename columns
+summary_stats
+
+t_test_result <- t.test(expected.profit ~ cancel.dummy, data = data_trt1, var.equal = FALSE)
+t_test_result
+
+###data_trt2###
+summary_stats <- aggregate(expected.profit ~ cancel.dummy, data = data_trt2, FUN = function(x) c(mean = mean(x), sd = sd(x)))
+summary_stats <- do.call(data.frame, summary_stats)  # Format as a data frame
+names(summary_stats)[2:3] <- c("mean", "sd")  # Rename columns
+summary_stats
+
+t_test_result <- t.test(expected.profit ~ cancel.dummy, data = data_trt2, var.equal = FALSE)
+t_test_result
+```
+
+### Further Analysis because of no converging insights : did chi square between business.type and cancel.dummy
+
+```{r}
+######business.type and dummy################ for confounding factor if get any difference from business type
+
+# Create a contingency table
+table_data <- table(data$business.type, data$cancel.dummy)
+print("Contingency Table:")
+print(table_data)
+
+# Calculate Row and Column Percentages
+row_percentages <- prop.table(table_data, 1) * 100  
+col_percentages <- prop.table(table_data, 2) * 100
+
+# Combine the table with row and column percentages for easy viewing
+table_with_percentages <- cbind(table_data, Column_Percentage = col_percentages[, 1])
+print("Table with Row and Column Percentages:")
+table_with_percentages
+
+# Perform the Chi-Square Test
+chi_square_result <- chisq.test(table_data)
+chi_square_result
+```
+
+### Lets perform same thing with business.type and penalty.variant
+
+```{r}
+# Create a contingency table
+table_data <- table(data$business.type, data$penalty.variant)
+print("Contingency Table:")
+print(table_data)
+
+# Calculate Row and column Percentages
+row_percentages <- prop.table(table_data, 1) * 100  # Row-wise percentages (1 means rows)
+col_percentages <- prop.table(table_data, 2) * 100  # Column-wise percentages (2 means columns)
+
+# Combine the table with row and column percentages for easy viewing
+table_with_percentages <- cbind(table_data, Column_Percentage = col_percentages[, 1])
+print("Table with Row and Column Percentages:")
+table_with_percentages
+
+# Perform the Chi-Square Test
+chi_square_result <- chisq.test(table_data)
+chi_square_result
+
+```
+
+### Linear Model
+
+```{r}
+adjusted_model <- lm(expected.profit ~ factor(business.type) + factor(penalty.variant) + factor(cancel.dummy), data = data)
+summary(adjusted_model)
+```
+
+### Plots
+
+```{r}
+table_data <- table(data$penalty.variant, data$cancel.dummy)
+print(table_data)
+table_data_col_pct <- prop.table(table_data, 2) * 100 
+print(table_data_col_pct)
+graph_data <- as.data.frame(table_data_col_pct)
+names(graph_data) <- c("Penalty_variant", "Cancel_Dummy", "Percentage")
+custom_colors <- c("0" = "darkred", "1" = "darkgreen")
+ggplot(graph_data, aes(fill = Cancel_Dummy, y = Percentage, x = Penalty_variant)) +
+  geom_bar(position = "dodge", stat = "identity") + 
+  scale_fill_manual(values = custom_colors) + 
+  ggtitle("Cancellation Requests by Penalty Variant (Column Percentages)") + 
+  xlab("Penalty Variant ($)") + 
+  ylab("Cancellation Percentage") + 
+  geom_text(aes(label = paste0(round(Percentage, 1), "%")),  
+            position = position_dodge(0.8), vjust = -0.5) +  
+  theme_minimal() + 
+  theme(legend.position = "bottom")  
+```
+
+### Plot cancellation rates by penalty variant(Row percentage)
+
+```{r}
+# Calculate cancellation rates by penalty variant
+cancel_rate_by_penalty <- aggregate(cancel.dummy ~ penalty.variant, data = data, FUN = function(x) mean(x))
+names(cancel_rate_by_penalty) <- c("penalty.variant", "cancellation_rate")
+print(cancel_rate_by_penalty)
+ggplot(cancel_rate_by_penalty, aes(x = factor(penalty.variant), y = cancellation_rate, fill = factor(penalty.variant))) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  labs(title = "Cancellation Rate by Penalty Variant(Row Percentage)", x = "Penalty Variant ($)", y = "Cancellation Rate") +
+  theme_minimal() +
+  geom_text(aes(label = scales::percent(cancellation_rate, accuracy = 0.01)), vjust = -0.3, size = 4)
+```
+
+### Profit in overall \$ for each variant
+
+```{r}
+# Calculate total profit for each penalty variant
+total_profit <- data %>%
+  group_by(penalty.variant) %>%
+  summarize(Total_Profit = sum(expected.profit, na.rm = TRUE))
+
+# Plot
+ggplot(total_profit, aes(x = penalty.variant, y = Total_Profit, fill = penalty.variant)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  geom_text(aes(label = paste0("$", round(Total_Profit, 2))), vjust = -0.3) +
+  labs(
+    title = "Total Profit by Penalty Variant",
+    x = "Penalty Variant ($)",
+    y = "Total Profit ($)"
+  ) +
+  theme_minimal()
+
+```
